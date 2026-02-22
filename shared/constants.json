@@ -1,0 +1,16 @@
+{
+  "MAX_OUTBREAKS": 8,
+  "INFECTION_RATE_TRACK": [2, 2, 2, 3, 3, 4, 4],
+  "MAX_RESEARCH_STATIONS": 6,
+  "DISEASE_COLORS": ["blue", "yellow", "black", "red"],
+  "PLAYER_ROLES": [
+    "Dispatcher",
+    "Medic",
+    "Scientist",
+    "Researcher",
+    "Operations Expert",
+    "Quarantine Specialist",
+    "Contingency Planner"
+  ],
+  "HAND_LIMIT": 7
+}
