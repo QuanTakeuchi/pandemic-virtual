@@ -72,10 +72,73 @@ class GameState {
             location: "Atlanta",
             hand: []
         };
+        // Deal 2 initial cards for testing
+        this.drawCards(socketId, 2);
+    }
+
+    drawCards(socketId, count) {
+        const player = this.players[socketId];
+        for (let i = 0; i < count; i++) {
+            if (this.playerDeck.length > 0) {
+                player.hand.push(this.playerDeck.pop());
+            }
+        }
     }
 
     removePlayer(socketId) {
         delete this.players[socketId];
+    }
+
+    movePlayer(socketId, action) {
+        // action: { type: 'drive'|'direct'|'charter'|'shuttle', target: string }
+        const player = this.players[socketId];
+        if (!player) return { success: false, message: "Player not found" };
+
+        const currentCity = player.location;
+        const targetCity = action.target;
+
+        if (!citiesData[targetCity]) return { success: false, message: "Invalid city" };
+
+        if (action.type === 'drive') {
+            // Check adjacency
+            if (citiesData[currentCity].neighbors.includes(targetCity)) {
+                player.location = targetCity;
+                return { success: true };
+            }
+            return { success: false, message: "Not adjacent" };
+        } 
+        else if (action.type === 'shuttle') {
+            // Check research stations
+            if (this.researchStations.has(currentCity) && this.researchStations.has(targetCity)) {
+                player.location = targetCity;
+                return { success: true };
+            }
+             return { success: false, message: "Both cities must have research stations" };
+        } 
+        else if (action.type === 'direct') {
+            // Discard card of target city
+            const cardIndex = player.hand.findIndex(c => c.name === targetCity);
+            if (cardIndex !== -1) {
+                const card = player.hand.splice(cardIndex, 1)[0];
+                this.playerDiscardPile.push(card);
+                player.location = targetCity;
+                return { success: true };
+            }
+             return { success: false, message: `Missing card for ${targetCity}` };
+        } 
+        else if (action.type === 'charter') {
+            // Discard card of current city
+            const cardIndex = player.hand.findIndex(c => c.name === currentCity);
+            if (cardIndex !== -1) {
+                const card = player.hand.splice(cardIndex, 1)[0];
+                this.playerDiscardPile.push(card);
+                player.location = targetCity;
+                return { success: true };
+            }
+             return { success: false, message: `Missing card for ${currentCity}` };
+        }
+        
+        return { success: false, message: "Unknown action" };
     }
 
     getState() {

@@ -35,6 +35,16 @@ io.on('connection', (socket) => {
   socket.on('get_initial_state', () => {
     socket.emit('initial_state', game.getState());
   });
+
+  socket.on('player_move', (action) => {
+    console.log(`Player ${socket.id} moving:`, action);
+    const result = game.movePlayer(socket.id, action);
+    if (result.success) {
+      io.emit('game_state_update', game.getState());
+    } else {
+      socket.emit('error_message', result.message);
+    }
+  });
 });
 
 const PORT = process.env.PORT || 3001;
