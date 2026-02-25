@@ -38,10 +38,13 @@ class GameState {
 
         // Initialize Decks
         this.initializeDecks();
-
+        
         // Reset Counters
         this.outbreakCounter = 0;
         this.infectionRateIndex = 0;
+
+        // Initial Infection
+        this.initialInfection();
     }
 
     initializeDecks() {
@@ -55,6 +58,7 @@ class GameState {
             name: city,
             color: citiesData[city].color
         }));
+        // TODO: Add Epidemic cards after dealing initial hands (Day 6)
         this.shuffle(this.playerDeck);
     }
 
@@ -65,6 +69,91 @@ class GameState {
         }
     }
 
+    initialInfection() {
+        // 3 cards with 3 cubes
+        for (let i = 0; i < 3; i++) {
+            const card = this.drawInfectionCard();
+            if (card) this.infectCity(card, citiesData[card].color, 3);
+        }
+        // 3 cards with 2 cubes
+        for (let i = 0; i < 3; i++) {
+            const card = this.drawInfectionCard();
+            if (card) this.infectCity(card, citiesData[card].color, 2);
+        }
+        // 3 cards with 1 cube
+        for (let i = 0; i < 3; i++) {
+            const card = this.drawInfectionCard();
+            if (card) this.infectCity(card, citiesData[card].color, 1);
+        }
+    }
+
+    drawInfectionCard() {
+        if (this.infectionDeck.length === 0) return null;
+        const card = this.infectionDeck.pop();
+        this.infectionDiscardPile.push(card);
+        return card;
+    }
+
+    infectCity(cityName, color, count = 1, outbrokenCities = new Set()) {
+        if (!this.cities[cityName]) return;
+        if (outbrokenCities.has(cityName)) return;
+
+        const cityState = this.cities[cityName];
+        
+        if (cityState.cubes[color] + count > 3) {
+            cityState.cubes[color] = 3; 
+            this.handleOutbreak(cityName, color, outbrokenCities);
+        } else {
+            cityState.cubes[color] += count;
+        }
+    }
+
+    handleOutbreak(cityName, color, outbrokenCities) {
+        if (outbrokenCities.has(cityName)) return;
+        outbrokenCities.add(cityName);
+        
+        this.outbreakCounter++;
+        
+        const neighbors = citiesData[cityName].neighbors;
+        neighbors.forEach(neighbor => {
+            this.infectCity(neighbor, color, 1, outbrokenCities);
+        });
+    }
+
+    handleInfectionPhase() {
+        const infectionRate = this.infectionRateTrack[this.infectionRateIndex];
+        const drawnCards = [];
+        for (let i = 0; i < infectionRate; i++) {
+            const card = this.drawInfectionCard();
+            if (card) {
+                 drawnCards.push(card);
+                 this.infectCity(card, citiesData[card].color, 1, new Set());
+            }
+        }
+        return drawnCards;
+    }
+
+    resolveEpidemic() {
+        // 1. Increase
+        this.infectionRateIndex++;
+        if (this.infectionRateIndex >= this.infectionRateTrack.length) {
+            this.infectionRateIndex = this.infectionRateTrack.length - 1;
+        }
+
+        // 2. Infect
+        if (this.infectionDeck.length > 0) {
+            // Draw from bottom (start of array)
+            const card = this.infectionDeck.shift(); 
+            this.infectCity(card, citiesData[card].color, 3, new Set());
+            this.infectionDiscardPile.push(card);
+        }
+
+        // 3. Intensify
+        this.shuffle(this.infectionDiscardPile);
+        this.infectionDeck.push(...this.infectionDiscardPile);
+        this.infectionDiscardPile = [];
+    }
+
     addPlayer(socketId) {
         this.players[socketId] = {
             id: socketId,
@@ -72,7 +161,6 @@ class GameState {
             location: "Atlanta",
             hand: []
         };
-        // Deal 2 initial cards for testing
         this.drawCards(socketId, 2);
     }
 
@@ -90,7 +178,6 @@ class GameState {
     }
 
     movePlayer(socketId, action) {
-        // action: { type: 'drive'|'direct'|'charter'|'shuttle', target: string }
         const player = this.players[socketId];
         if (!player) return { success: false, message: "Player not found" };
 
@@ -100,7 +187,6 @@ class GameState {
         if (!citiesData[targetCity]) return { success: false, message: "Invalid city" };
 
         if (action.type === 'drive') {
-            // Check adjacency
             if (citiesData[currentCity].neighbors.includes(targetCity)) {
                 player.location = targetCity;
                 return { success: true };
@@ -108,7 +194,6 @@ class GameState {
             return { success: false, message: "Not adjacent" };
         } 
         else if (action.type === 'shuttle') {
-            // Check research stations
             if (this.researchStations.has(currentCity) && this.researchStations.has(targetCity)) {
                 player.location = targetCity;
                 return { success: true };
@@ -116,7 +201,6 @@ class GameState {
              return { success: false, message: "Both cities must have research stations" };
         } 
         else if (action.type === 'direct') {
-            // Discard card of target city
             const cardIndex = player.hand.findIndex(c => c.name === targetCity);
             if (cardIndex !== -1) {
                 const card = player.hand.splice(cardIndex, 1)[0];
@@ -127,7 +211,6 @@ class GameState {
              return { success: false, message: `Missing card for ${targetCity}` };
         } 
         else if (action.type === 'charter') {
-            // Discard card of current city
             const cardIndex = player.hand.findIndex(c => c.name === currentCity);
             if (cardIndex !== -1) {
                 const card = player.hand.splice(cardIndex, 1)[0];
@@ -149,11 +232,10 @@ class GameState {
             infectionRateIndex: this.infectionRateIndex,
             researchStations: Array.from(this.researchStations),
             cures: this.cures,
-            // Don't send full decks to client to prevent cheating, but send counts
             playerDeckSize: this.playerDeck.length,
             infectionDeckSize: this.infectionDeck.length,
-            infectionDiscardPile: this.infectionDiscardPile, // Visible
-            playerDiscardPile: this.playerDiscardPile // Visible
+            infectionDiscardPile: this.infectionDiscardPile,
+            playerDiscardPile: this.playerDiscardPile
         };
     }
 }
