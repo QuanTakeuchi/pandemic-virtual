@@ -45,6 +45,29 @@ io.on('connection', (socket) => {
       socket.emit('error_message', result.message);
     }
   });
+
+  socket.on('end_turn', () => {
+    console.log(`Player ${socket.id} ending turn`);
+    const result = game.endTurn(socket.id);
+    if (result.success) {
+      io.emit('game_state_update', game.getState());
+      if (result.message) {
+          socket.emit('error_message', result.message); 
+      }
+    } else {
+      socket.emit('error_message', result.message);
+    }
+  });
+
+  socket.on('discard_card', (cardName) => {
+    console.log(`Player ${socket.id} discarding ${cardName}`);
+    const result = game.discardCard(socket.id, cardName);
+    if (result.success) {
+      io.emit('game_state_update', game.getState());
+    } else {
+      socket.emit('error_message', result.message);
+    }
+  });
 });
 
 const PORT = process.env.PORT || 3001;

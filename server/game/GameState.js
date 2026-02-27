@@ -1,6 +1,14 @@
 const citiesData = require('../../shared/cities.json');
 const constants = require('../../shared/constants.json');
 
+const EVENT_CARDS = [
+    { type: 'event', name: 'Airlift', description: "Move any pawn to any city." },
+    { type: 'event', name: 'Government Grant', description: "Add a research station to any city." },
+    { type: 'event', name: 'Forecast', description: "Draw 6, rearrange, put back on top." },
+    { type: 'event', name: 'One Quiet Night', description: "Skip the next Infect Cities step." },
+    { type: 'event', name: 'Resilient Population', description: "Remove a card from the Infection Discard Pile from the game." }
+];
+
 class GameState {
     constructor() {
         this.cities = {}; // State of each city (disease cubes)
@@ -22,6 +30,10 @@ class GameState {
         this.playerDiscardPile = [];
         this.infectionDiscardPile = [];
 
+        this.gameStarted = false;
+        this.difficulty = 4; // Number of Epidemic cards
+        this.oneQuietNightActive = false; // For the event card
+
         this.initializeGame();
     }
 
@@ -42,9 +54,7 @@ class GameState {
         // Reset Counters
         this.outbreakCounter = 0;
         this.infectionRateIndex = 0;
-
-        // Initial Infection
-        this.initialInfection();
+        this.oneQuietNightActive = false;
     }
 
     initializeDecks() {
@@ -52,14 +62,67 @@ class GameState {
         this.infectionDeck = Object.keys(citiesData);
         this.shuffle(this.infectionDeck);
 
-        // Create Player Deck (City cards for now, add Events later)
-        this.playerDeck = Object.keys(citiesData).map(city => ({
+        // Create Player Deck (City cards + Event cards)
+        // Note: Epidemic cards are added in startGame()
+        const cityCards = Object.keys(citiesData).map(city => ({
             type: 'city',
             name: city,
             color: citiesData[city].color
         }));
-        // TODO: Add Epidemic cards after dealing initial hands (Day 6)
+        
+        this.playerDeck = [...cityCards, ...EVENT_CARDS];
         this.shuffle(this.playerDeck);
+    }
+
+    startGame() {
+        if (this.gameStarted) return;
+        
+        // Initial Infection
+        this.initialInfection();
+
+        // Prepare Player Deck with Epidemic Cards
+        this.prepareEpidemicDeck();
+
+        this.gameStarted = true;
+    }
+
+    prepareEpidemicDeck() {
+        // Divide player deck into `difficulty` piles
+        const totalCards = this.playerDeck.length;
+        const pileSize = Math.floor(totalCards / this.difficulty);
+        const piles = [];
+
+        // Create piles
+        let currentDeckIndex = 0;
+        for (let i = 0; i < this.difficulty; i++) {
+            // Determine size of this pile (handle remainder in last pile)
+            const size = (i === this.difficulty - 1) ? (totalCards - currentDeckIndex) : pileSize;
+            const pile = this.playerDeck.slice(currentDeckIndex, currentDeckIndex + size);
+            currentDeckIndex += size;
+            
+            // Add Epidemic Card
+            pile.push({
+                type: 'epidemic',
+                name: 'Epidemic'
+            });
+
+            // Shuffle this pile
+            this.shuffle(pile);
+            piles.push(pile);
+        }
+
+        // Stack piles (last pile goes on bottom, so first pile is on top of array? 
+        // Array.pop() takes from end, so end of array is "top" of deck.
+        // We want the first pile (i=0) to be on top.
+        // So we should push piles in reverse order or just concat correctly.
+        // Let's say pile 0 is top. We want pile 0 at the end of the array.
+        
+        this.playerDeck = [];
+        // Piles[0] is top, should be at end of array.
+        // Piles[3] is bottom, should be at start of array.
+        for (let i = this.difficulty - 1; i >= 0; i--) {
+            this.playerDeck = this.playerDeck.concat(piles[i]);
+        }
     }
 
     shuffle(array) {
@@ -120,19 +183,6 @@ class GameState {
         });
     }
 
-    handleInfectionPhase() {
-        const infectionRate = this.infectionRateTrack[this.infectionRateIndex];
-        const drawnCards = [];
-        for (let i = 0; i < infectionRate; i++) {
-            const card = this.drawInfectionCard();
-            if (card) {
-                 drawnCards.push(card);
-                 this.infectCity(card, citiesData[card].color, 1, new Set());
-            }
-        }
-        return drawnCards;
-    }
-
     resolveEpidemic() {
         // 1. Increase
         this.infectionRateIndex++;
@@ -142,7 +192,8 @@ class GameState {
 
         // 2. Infect
         if (this.infectionDeck.length > 0) {
-            // Draw from bottom (start of array)
+            // Draw from bottom (start of array) - standard is bottom of deck
+            // Here index 0 is bottom.
             const card = this.infectionDeck.shift(); 
             this.infectCity(card, citiesData[card].color, 3, new Set());
             this.infectionDiscardPile.push(card);
@@ -150,6 +201,7 @@ class GameState {
 
         // 3. Intensify
         this.shuffle(this.infectionDiscardPile);
+        // Put on top (end of array)
         this.infectionDeck.push(...this.infectionDiscardPile);
         this.infectionDiscardPile = [];
     }
@@ -157,20 +209,58 @@ class GameState {
     addPlayer(socketId) {
         this.players[socketId] = {
             id: socketId,
-            role: null, // Assign later
+            role: null, 
             location: "Atlanta",
-            hand: []
+            hand: [],
+            mustDiscard: false,
+            hasDrawnCards: false
         };
+        // Deal initial cards (simple: 2 cards)
+        // If game started, this might include epidemics, but usually joining is pre-game.
         this.drawCards(socketId, 2);
     }
 
     drawCards(socketId, count) {
         const player = this.players[socketId];
+        const drawn = [];
         for (let i = 0; i < count; i++) {
             if (this.playerDeck.length > 0) {
-                player.hand.push(this.playerDeck.pop());
+                const card = this.playerDeck.pop();
+                
+                if (card.type === 'epidemic') {
+                    this.resolveEpidemic();
+                    this.playerDiscardPile.push(card); // Epidemic goes to discard (or separate pile)
+                    drawn.push(card); // Notify client
+                } else {
+                    player.hand.push(card);
+                    drawn.push(card);
+                }
             }
         }
+        
+        // Check Hand Limit
+        if (player.hand.length > constants.HAND_LIMIT) {
+            player.mustDiscard = true;
+        }
+
+        return drawn;
+    }
+
+    discardCard(socketId, cardName) {
+        const player = this.players[socketId];
+        if (!player) return { success: false, message: "Player not found" };
+
+        const cardIndex = player.hand.findIndex(c => c.name === cardName);
+        if (cardIndex === -1) return { success: false, message: "Card not in hand" };
+
+        const card = player.hand.splice(cardIndex, 1)[0];
+        this.playerDiscardPile.push(card);
+
+        if (player.hand.length <= constants.HAND_LIMIT) {
+            player.mustDiscard = false;
+        }
+
+        return { success: true };
     }
 
     removePlayer(socketId) {
@@ -180,6 +270,7 @@ class GameState {
     movePlayer(socketId, action) {
         const player = this.players[socketId];
         if (!player) return { success: false, message: "Player not found" };
+        if (player.mustDiscard) return { success: false, message: "Must discard cards first" };
 
         const currentCity = player.location;
         const targetCity = action.target;
@@ -224,8 +315,53 @@ class GameState {
         return { success: false, message: "Unknown action" };
     }
 
+    endTurn(socketId) {
+        const player = this.players[socketId];
+        if (!player) return { success: false, message: "Player not found" };
+
+        if (player.mustDiscard) {
+            return { success: false, message: "Must discard cards first" };
+        }
+
+        // 1. Draw 2 Player Cards (only if not already drawn)
+        if (!player.hasDrawnCards) {
+            this.drawCards(socketId, 2);
+            player.hasDrawnCards = true;
+        }
+
+        // 2. Check Hand Limit
+        if (player.mustDiscard) {
+            // Stop here, client must handle discard
+            return { success: true, message: "Hand limit reached. Discard cards." };
+        }
+
+        // 3. Infect Cities
+        this.runInfectionStep();
+
+        // Reset for next turn (resetting hasDrawnCards for THIS player, but turn actually passes to NEXT player?)
+        // Currently turn logic is not fully implemented (no active player concept), so we just reset for this player.
+        player.hasDrawnCards = false;
+        
+        return { success: true, message: "Turn ended." };
+    }
+
+    runInfectionStep() {
+        if (!this.oneQuietNightActive) {
+            const infectionRate = this.infectionRateTrack[this.infectionRateIndex];
+            for (let i = 0; i < infectionRate; i++) {
+                const card = this.drawInfectionCard();
+                if (card) {
+                    this.infectCity(card, citiesData[card].color, 1);
+                }
+            }
+        } else {
+            this.oneQuietNightActive = false;
+        }
+    }
+
     getState() {
         return {
+            gameStarted: this.gameStarted,
             cities: this.cities,
             players: this.players,
             outbreakCounter: this.outbreakCounter,
