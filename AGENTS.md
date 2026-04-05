@@ -17,3 +17,6 @@ A web-based multiplayer implementation of the Pandemic board game.
 ## Tech Stack
 - **Frontend**: React 19, Vite
 - **Backend**: Node.js, Express, Socket.io
+
+## Important LLM Instruction
+Whenever an LLM loads this file into context and makes changes to the project, it must update this AGENTS.md file along with the changes to keep the context accurate and up-to-date.

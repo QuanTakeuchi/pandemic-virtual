@@ -17,3 +17,6 @@ Relies on data from the root `/shared` directory (`cities.json`, `constants.json
 
 ## Current Tasks
 Handling remaining game actions like "Share Knowledge" and ensuring all state changes are properly emitted to clients for UI updates (Day 8 polish).
+
+## Important LLM Instruction
+Whenever an LLM loads this file into context and makes changes to the package, it must update this AGENTS.md file along with the changes to keep the context accurate and up-to-date.
