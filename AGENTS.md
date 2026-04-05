@@ -19,4 +19,4 @@ A web-based multiplayer implementation of the Pandemic board game.
 - **Backend**: Node.js, Express, Socket.io
 
 ## Important LLM Instruction
-Whenever an LLM loads this file into context and makes changes to the project, it must update this AGENTS.md file along with the changes to keep the context accurate and up-to-date.
+Whenever an LLM loads this file into context and makes changes to the package, it must update this AGENTS.md file if there are any major changes to the structure or logic of the code package. If the changes are minor tweaks no need to update the AGENTS.md files
