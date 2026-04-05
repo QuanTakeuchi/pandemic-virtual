@@ -213,7 +213,8 @@ class GameState {
             location: "Atlanta",
             hand: [],
             mustDiscard: false,
-            hasDrawnCards: false
+            hasDrawnCards: false,
+            actionsLeft: 4
         };
         // Deal initial cards (simple: 2 cards)
         // If game started, this might include epidemics, but usually joining is pre-game.
@@ -267,52 +268,200 @@ class GameState {
         delete this.players[socketId];
     }
 
+    checkActionPoints(player) {
+        if (player.actionsLeft <= 0) return { success: false, message: "No actions left" };
+        if (player.mustDiscard) return { success: false, message: "Must discard cards first" };
+        return { success: true };
+    }
+
     movePlayer(socketId, action) {
         const player = this.players[socketId];
         if (!player) return { success: false, message: "Player not found" };
-        if (player.mustDiscard) return { success: false, message: "Must discard cards first" };
+        
+        const check = this.checkActionPoints(player);
+        if (!check.success) return check;
 
         const currentCity = player.location;
         const targetCity = action.target;
 
         if (!citiesData[targetCity]) return { success: false, message: "Invalid city" };
 
+        let cost = 1;
+        let success = false;
+
         if (action.type === 'drive') {
             if (citiesData[currentCity].neighbors.includes(targetCity)) {
-                player.location = targetCity;
-                return { success: true };
+                success = true;
+            } else {
+                return { success: false, message: "Not adjacent" };
             }
-            return { success: false, message: "Not adjacent" };
         } 
         else if (action.type === 'shuttle') {
             if (this.researchStations.has(currentCity) && this.researchStations.has(targetCity)) {
-                player.location = targetCity;
-                return { success: true };
+                success = true;
+            } else {
+                return { success: false, message: "Both cities must have research stations" };
             }
-             return { success: false, message: "Both cities must have research stations" };
         } 
         else if (action.type === 'direct') {
             const cardIndex = player.hand.findIndex(c => c.name === targetCity);
             if (cardIndex !== -1) {
                 const card = player.hand.splice(cardIndex, 1)[0];
                 this.playerDiscardPile.push(card);
-                player.location = targetCity;
-                return { success: true };
+                success = true;
+            } else {
+                return { success: false, message: `Missing card for ${targetCity}` };
             }
-             return { success: false, message: `Missing card for ${targetCity}` };
         } 
         else if (action.type === 'charter') {
             const cardIndex = player.hand.findIndex(c => c.name === currentCity);
             if (cardIndex !== -1) {
                 const card = player.hand.splice(cardIndex, 1)[0];
                 this.playerDiscardPile.push(card);
-                player.location = targetCity;
-                return { success: true };
+                success = true;
+            } else {
+                return { success: false, message: `Missing card for ${currentCity}` };
             }
-             return { success: false, message: `Missing card for ${currentCity}` };
+        }
+        
+        if (success) {
+            player.location = targetCity;
+            player.actionsLeft -= cost;
+            return { success: true };
         }
         
         return { success: false, message: "Unknown action" };
+    }
+
+    treatDisease(socketId, color) {
+        const player = this.players[socketId];
+        if (!player) return { success: false, message: "Player not found" };
+        
+        const check = this.checkActionPoints(player);
+        if (!check.success) return check;
+
+        const cityState = this.cities[player.location];
+        if (cityState.cubes[color] > 0) {
+            // Remove 1 cube unless cured, then remove all (or role is Medic)
+            // For now, simplify: if cured -> remove all, else remove 1
+            if (this.cures[color] || player.role === 'Medic') {
+                cityState.cubes[color] = 0;
+            } else {
+                cityState.cubes[color]--;
+            }
+            player.actionsLeft--;
+            return { success: true };
+        }
+        return { success: false, message: "No disease of that color here" };
+    }
+
+    buildResearchStation(socketId) {
+        const player = this.players[socketId];
+        if (!player) return { success: false, message: "Player not found" };
+        
+        const check = this.checkActionPoints(player);
+        if (!check.success) return check;
+
+        const city = player.location;
+        if (this.researchStations.has(city)) return { success: false, message: "Station already built" };
+        if (this.researchStations.size >= constants.MAX_RESEARCH_STATIONS) return { success: false, message: "Max stations reached" };
+
+        // Check for card unless Operations Expert
+        const cardIndex = player.hand.findIndex(c => c.name === city);
+        if (player.role !== 'Operations Expert' && cardIndex === -1) {
+            return { success: false, message: "Need city card to build" };
+        }
+
+        if (player.role !== 'Operations Expert') {
+            const card = player.hand.splice(cardIndex, 1)[0];
+            this.playerDiscardPile.push(card);
+        }
+
+        this.researchStations.add(city);
+        player.actionsLeft--;
+        return { success: true };
+    }
+
+    discoverCure(socketId, color) {
+        const player = this.players[socketId];
+        if (!player) return { success: false, message: "Player not found" };
+        
+        const check = this.checkActionPoints(player);
+        if (!check.success) return check;
+
+        if (!this.researchStations.has(player.location)) return { success: false, message: "Must be at Research Station" };
+        if (this.cures[color]) return { success: false, message: "Already cured" };
+
+        const cardsNeeded = player.role === 'Scientist' ? 4 : 5;
+        const matchingCards = player.hand.filter(c => c.color === color && c.type === 'city');
+        
+        if (matchingCards.length < cardsNeeded) return { success: false, message: `Need ${cardsNeeded} ${color} cards` };
+
+        // Discard cards
+        for (let i = 0; i < cardsNeeded; i++) {
+            const cardIndex = player.hand.findIndex(c => c.name === matchingCards[i].name);
+            const card = player.hand.splice(cardIndex, 1)[0];
+            this.playerDiscardPile.push(card);
+        }
+
+        this.cures[color] = true; // Mark cured
+        // Check eradication? (Maybe later)
+        
+        player.actionsLeft--;
+        return { success: true };
+    }
+
+    shareKnowledge(socketId, targetPlayerId, cardName) {
+         const player = this.players[socketId];
+         const targetPlayer = this.players[targetPlayerId];
+         
+         if (!player || !targetPlayer) return { success: false, message: "Player not found" };
+         
+         const check = this.checkActionPoints(player);
+         if (!check.success) return check;
+
+         if (player.location !== targetPlayer.location) return { success: false, message: "Must be in same city" };
+
+         // Determine giver and receiver
+         // Since this is initiated by `socketId`, are they giving or taking?
+         // Simplification: Assume `socketId` is GIVING `cardName` to `targetPlayerId`
+         // OR `socketId` is TAKING `cardName` from `targetPlayerId`.
+         
+         // Let's implement GIVE for now.
+         // If card is in player's hand -> GIVE
+         // If card is in target's hand -> TAKE (but only on YOUR turn)
+         
+         let giver = player;
+         let receiver = targetPlayer;
+         let card = giver.hand.find(c => c.name === cardName);
+         
+         if (!card) {
+             // Maybe we are taking?
+             giver = targetPlayer;
+             receiver = player;
+             card = giver.hand.find(c => c.name === cardName);
+             if (!card) return { success: false, message: "Card not found in either hand" };
+         }
+         
+         // Check restrictions
+         // Researcher can give any card. Everyone else must give card matching current city.
+         if (giver.role !== 'Researcher' && card.name !== player.location) {
+             return { success: false, message: "Must share card of current city" };
+         }
+
+         // Transfer
+         const cardIndex = giver.hand.findIndex(c => c.name === cardName);
+         giver.hand.splice(cardIndex, 1);
+         receiver.hand.push(card);
+         
+         // Check hand limit for receiver immediately? Usually checked at end of turn, 
+         // but strictly it's instant discard if > 7. For simplicity, let's flag receiver.
+         if (receiver.hand.length > constants.HAND_LIMIT) {
+             receiver.mustDiscard = true;
+         }
+
+         player.actionsLeft--;
+         return { success: true };
     }
 
     endTurn(socketId) {
@@ -338,9 +487,9 @@ class GameState {
         // 3. Infect Cities
         this.runInfectionStep();
 
-        // Reset for next turn (resetting hasDrawnCards for THIS player, but turn actually passes to NEXT player?)
-        // Currently turn logic is not fully implemented (no active player concept), so we just reset for this player.
+        // Reset for next turn
         player.hasDrawnCards = false;
+        player.actionsLeft = 4; // Reset Action Points
         
         return { success: true, message: "Turn ended." };
     }

@@ -46,6 +46,46 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('treat_disease', (color) => {
+    console.log(`Player ${socket.id} treating ${color}`);
+    const result = game.treatDisease(socket.id, color);
+    if (result.success) {
+      io.emit('game_state_update', game.getState());
+    } else {
+      socket.emit('error_message', result.message);
+    }
+  });
+
+  socket.on('build_station', () => {
+    console.log(`Player ${socket.id} building station`);
+    const result = game.buildResearchStation(socket.id);
+    if (result.success) {
+      io.emit('game_state_update', game.getState());
+    } else {
+      socket.emit('error_message', result.message);
+    }
+  });
+
+  socket.on('discover_cure', (color) => {
+    console.log(`Player ${socket.id} discovering cure for ${color}`);
+    const result = game.discoverCure(socket.id, color);
+    if (result.success) {
+      io.emit('game_state_update', game.getState());
+    } else {
+      socket.emit('error_message', result.message);
+    }
+  });
+
+  socket.on('share_knowledge', ({ targetPlayerId, cardName }) => {
+    console.log(`Player ${socket.id} sharing ${cardName} with ${targetPlayerId}`);
+    const result = game.shareKnowledge(socket.id, targetPlayerId, cardName);
+    if (result.success) {
+      io.emit('game_state_update', game.getState());
+    } else {
+      socket.emit('error_message', result.message);
+    }
+  });
+
   socket.on('end_turn', () => {
     console.log(`Player ${socket.id} ending turn`);
     const result = game.endTurn(socket.id);
